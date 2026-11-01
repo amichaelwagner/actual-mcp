@@ -9,7 +9,13 @@ export class TransactionGrouper {
     includeIncome: boolean
   ): Record<string, CategorySpending> {
     const spendingByCategory: Record<string, CategorySpending> = {};
-    transactions.forEach((transaction) => {
+    // Reason: Actual returns a split as an uncategorized parent with categorized `subtransactions`.
+    // Counting the children (instead of the parent) attributes each split piece to its own category;
+    // ordinary transactions arrive with an empty `subtransactions` array, so test its length.
+    const flattened = transactions.flatMap((transaction) =>
+      transaction.subtransactions?.length ? transaction.subtransactions : [transaction]
+    );
+    flattened.forEach((transaction) => {
       if (!transaction.category) return; // Skip uncategorized
       const categoryId = transaction.category;
       const categoryName = getCategoryName(categoryId);

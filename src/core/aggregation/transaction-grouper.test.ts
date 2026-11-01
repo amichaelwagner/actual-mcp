@@ -258,4 +258,21 @@ describe('TransactionGrouper', () => {
       transactions: 2,
     });
   });
+
+  it('counts split pieces under their own categories instead of skipping the uncategorized parent', () => {
+    const split = {
+      id: 'p',
+      account: 'acc1',
+      date: '2026-10-30',
+      amount: -6245,
+      subtransactions: [
+        { id: 'c1', account: 'acc1', date: '2026-10-30', amount: -3000, category: 'cat1' },
+        { id: 'c2', account: 'acc1', date: '2026-10-30', amount: -3245, category: 'cat4' },
+      ],
+    } as unknown as Transaction;
+    const result = grouper.groupByCategory([split], mockGetCategoryName, mockGetGroupInfo, false);
+    expect(result.cat1.total).toBe(-3000);
+    expect(result.cat4.total).toBe(-3245);
+    expect(result.cat1.transactions).toBe(1);
+  });
 });

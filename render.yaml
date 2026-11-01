@@ -11,7 +11,7 @@ services:
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
-        value: "24"
+        value: '24'
       - key: ACTUAL_SERVER_URL
         sync: false
       - key: ACTUAL_PASSWORD

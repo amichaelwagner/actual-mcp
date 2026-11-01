@@ -8,6 +8,7 @@ import { success, errorFromCatch } from '../../utils/response.js';
 import { getDateRange } from '../../utils.js';
 import { GetTransactionsArgsSchema, type GetTransactionsArgs, type ToolInput } from '../../types.js';
 import { toJSONSchema } from 'zod';
+import { filterByCategoryName } from './category-filter.js';
 
 export const schema = {
   name: 'get-transactions',
@@ -35,8 +36,7 @@ export async function handler(args: GetTransactionsArgs): Promise<CallToolResult
       filtered = filtered.filter((t) => t.amount <= maxAmount * 100);
     }
     if (categoryName) {
-      const lowerCategory = categoryName.toLowerCase();
-      filtered = filtered.filter((t) => (t.category_name || '').toLowerCase().includes(lowerCategory));
+      filtered = filterByCategoryName(filtered, categoryName);
     }
     if (payeeName) {
       const lowerPayee = payeeName.toLowerCase();
