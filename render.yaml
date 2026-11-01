@@ -1,0 +1,24 @@
+# Render Blueprint — deploys this MCP server as a free web service for use as a Claude custom connector.
+# After the first deploy, set the secret values in the Render dashboard (they are never stored in this file).
+services:
+  - type: web
+    name: actual-mcp
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: node build/index.js --sse --enable-write --enable-bearer --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: ACTUAL_SERVER_URL
+        sync: false
+      - key: ACTUAL_PASSWORD
+        sync: false
+      - key: ACTUAL_BUDGET_SYNC_ID
+        sync: false
+      - key: ACTUAL_DATA_DIR
+        value: /tmp/actual
+      - key: BEARER_TOKEN
+        generateValue: true

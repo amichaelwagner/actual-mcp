@@ -60,22 +60,26 @@ const bearerAuth = (req: Request, res: Response, next: NextFunction): void => {
   }
 
   const authHeader = req.headers.authorization;
+  // Reason: claude.ai's "Add custom connector" dialog only takes a URL (no custom headers),
+  // so a `?token=` query param is accepted as a fallback when no Authorization header is sent.
+  // Weaker than the header (URLs can land in logs), so the header still wins when present.
+  const queryToken = typeof req.query?.token === 'string' && req.query.token ? req.query.token : undefined;
 
-  if (!authHeader) {
+  if (!authHeader && !queryToken) {
     res.status(401).json({
-      error: 'Authorization header required',
+      error: 'Authorization header or token query parameter required',
     });
     return;
   }
 
-  if (!authHeader.startsWith('Bearer ')) {
+  if (authHeader && !authHeader.startsWith('Bearer ')) {
     res.status(401).json({
       error: "Authorization header must start with 'Bearer '",
     });
     return;
   }
 
-  const token = authHeader.substring(7); // Remove "Bearer " prefix
+  const token = authHeader ? authHeader.substring(7) : queryToken; // Remove "Bearer " prefix
   const expectedToken = process.env.BEARER_TOKEN;
 
   if (!expectedToken) {
@@ -237,6 +241,11 @@ async function main(): Promise<void> {
       }
       return Array.isArray(value) ? value[0] : value;
     };
+
+    // Unauthenticated health check for hosting platforms (e.g. Render). Reveals nothing about the budget.
+    app.get('/healthz', (_req, res) => {
+      res.status(200).send('ok');
+    });
 
     app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/sse'], (_req, res) => {
       res.status(404).json({ error: 'OAuth metadata not configured for this server' });
