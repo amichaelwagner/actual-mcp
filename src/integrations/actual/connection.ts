@@ -204,7 +204,7 @@ export class ActualConnection {
           : undefined
       );
 
-      await rebuildBudgetCache(this.actualLib);
+      await reloadBudgetAfterDownload(this.actualLib, budgetId);
 
       // Reason: seed lastSyncAt so the first call after init does not immediately sync.
       this.lastSyncAt = Date.now();
@@ -228,13 +228,61 @@ export class ActualConnection {
 }
 
 /**
- * Recompute every budget month from the raw budget rows after a download.
+ * Log the previous month's To Budget, so cold-start logs show whether the
+ * budget sheet computed correctly. Never throws.
  *
- * Reason: a fresh download can ship a stale computed-spreadsheet cache
- * (cache.sqlite). Months whose budget rows arrived after that cache was built
- * then read as $0 budgeted, which skews To Budget for every later month. This is
- * the same "Reset budget cache" action the Actual app offers. Failure is logged,
- * not thrown, so a cache problem never blocks the connection.
+ * @param stage - Label for the log line
+ */
+async function logToBudgetProbe(stage: string): Promise<void> {
+  try {
+    const now = new Date();
+    const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const month = prev.toISOString().slice(0, 7);
+    const sheet = (await api.getBudgetMonth(month)) as { toBudget?: number };
+    console.error(`[budget-probe] ${stage}: ${month} toBudget=${sheet.toBudget}`);
+  } catch {
+    // Reason: the probe is diagnostic only.
+  }
+}
+
+/**
+ * Close and reopen the budget after a download, then rebuild the budget cache.
+ *
+ * Reason: on a cold start the hosted server's downloaded file is empty and the
+ * whole history arrives as ~40k replayed sync messages. Budget-month sheets built
+ * during that replay can miss budget rows (July 2026 read as $0 budgeted), which
+ * skews To Budget for every later month. Reopening the budget once all data is
+ * on disk rebuilds every sheet from the complete tables; the cache reset is a
+ * second pass. Failures are logged, not thrown, so this never blocks the connection.
+ *
+ * @param lib - The library handle returned by `api.init()`
+ * @param syncId - The budget's sync (cloud file) id
+ */
+export async function reloadBudgetAfterDownload(lib: Pick<ActualApi, 'send'> | null, syncId: string): Promise<void> {
+  if (!lib || typeof lib.send !== 'function') return;
+  await logToBudgetProbe('after download');
+  try {
+    const budgets: BudgetFile[] = await api.getBudgets();
+    const local = budgets.find((b) => b.cloudFileId === syncId && b.id);
+    if (local?.id) {
+      await lib.send('close-budget');
+      await lib.send('load-budget', { id: local.id });
+      await logToBudgetProbe('after reload');
+    } else {
+      console.error('Budget reload skipped: no local copy found for', syncId);
+    }
+  } catch (err) {
+    console.error('Failed to reload budget after download:', err);
+  }
+  await rebuildBudgetCache(lib);
+  await logToBudgetProbe('after cache reset');
+}
+
+/**
+ * Recompute every budget month from the raw budget rows.
+ *
+ * Reason: this is the same "Reset budget cache" action the Actual app offers.
+ * Failure is logged, not thrown, so a cache problem never blocks the connection.
  *
  * @param lib - The library handle returned by `api.init()`
  */
