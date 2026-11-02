@@ -204,7 +204,7 @@ export class ActualConnection {
           : undefined
       );
 
-      await reloadBudgetAfterDownload(this.actualLib, budgetId);
+      await reloadBudgetAfterDownload(this.actualLib);
 
       // Reason: seed lastSyncAt so the first call after init does not immediately sync.
       this.lastSyncAt = Date.now();
@@ -246,34 +246,21 @@ async function logToBudgetProbe(stage: string): Promise<void> {
 }
 
 /**
- * Close and reopen the budget after a download, then rebuild the budget cache.
+ * Let the budget sheet settle after a download, then rebuild the budget cache.
  *
  * Reason: on a cold start the hosted server's downloaded file is empty and the
- * whole history arrives as ~40k replayed sync messages. Budget-month sheets built
- * during that replay can miss budget rows (July 2026 read as $0 budgeted), which
- * skews To Budget for every later month. Reopening the budget once all data is
- * on disk rebuilds every sheet from the complete tables; the cache reset is a
- * second pass. Failures are logged, not thrown, so this never blocks the connection.
+ * whole history arrives as ~40k replayed sync messages. The budget sheet computed
+ * from that replay can be stale (July 2026 read as $0 budgeted, skewing To Budget
+ * by $288 for every later month). A cache reset fixes it, but only once the
+ * replay's own recompute has finished: a reset fired too early was observed to be
+ * overwritten. Reading a month first waits for the sheet to settle. The probe
+ * lines in the log show the before/after values. Never throws.
  *
  * @param lib - The library handle returned by `api.init()`
- * @param syncId - The budget's sync (cloud file) id
  */
-export async function reloadBudgetAfterDownload(lib: Pick<ActualApi, 'send'> | null, syncId: string): Promise<void> {
+export async function reloadBudgetAfterDownload(lib: Pick<ActualApi, 'send'> | null): Promise<void> {
   if (!lib || typeof lib.send !== 'function') return;
   await logToBudgetProbe('after download');
-  try {
-    const budgets: BudgetFile[] = await api.getBudgets();
-    const local = budgets.find((b) => b.cloudFileId === syncId && b.id);
-    if (local?.id) {
-      await lib.send('close-budget');
-      await lib.send('load-budget', { id: local.id });
-      await logToBudgetProbe('after reload');
-    } else {
-      console.error('Budget reload skipped: no local copy found for', syncId);
-    }
-  } catch (err) {
-    console.error('Failed to reload budget after download:', err);
-  }
   await rebuildBudgetCache(lib);
   await logToBudgetProbe('after cache reset');
 }

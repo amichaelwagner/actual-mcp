@@ -420,42 +420,26 @@ describe('rebuildBudgetCache', () => {
     vi.mocked(api.downloadBudget).mockResolvedValueOnce(undefined as never);
     delete process.env.ACTUAL_BUDGET_SYNC_ID;
     await getActualConnection().ensureReady();
-    expect(send).toHaveBeenCalledWith('close-budget');
-    expect(send).toHaveBeenCalledWith('load-budget', { id: 'b' });
     expect(send).toHaveBeenCalledWith('reset-budget-cache');
     resetActualConnectionForTests();
   });
 });
 
 describe('reloadBudgetAfterDownload', () => {
-  it('reopens the matching local budget, then resets the cache', async () => {
+  it('resets the budget cache', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    vi.mocked(api.getBudgets).mockResolvedValueOnce([
-      { id: 'other', cloudFileId: 'x' },
-      { id: 'local-1', cloudFileId: 'sync-1' },
-    ] as never);
-    await reloadBudgetAfterDownload({ send } as never, 'sync-1');
-    expect(send.mock.calls.map((c) => c[0])).toEqual(['close-budget', 'load-budget', 'reset-budget-cache']);
-    expect(send).toHaveBeenCalledWith('load-budget', { id: 'local-1' });
-  });
-
-  it('skips the reload but still resets the cache when no local copy matches', async () => {
-    const send = vi.fn().mockResolvedValue(undefined);
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    vi.mocked(api.getBudgets).mockResolvedValueOnce([{ id: 'other', cloudFileId: 'x' }] as never);
-    await reloadBudgetAfterDownload({ send } as never, 'sync-1');
+    await reloadBudgetAfterDownload({ send } as never);
     expect(send.mock.calls.map((c) => c[0])).toEqual(['reset-budget-cache']);
-    spy.mockRestore();
   });
 
-  it('logs and continues when the reload fails', async () => {
-    const send = vi.fn().mockImplementation(async (name: string) => {
-      if (name === 'load-budget') throw new Error('boom');
-    });
+  it('does nothing without a library handle', async () => {
+    await expect(reloadBudgetAfterDownload(null)).resolves.toBeUndefined();
+  });
+
+  it('continues when the cache reset fails', async () => {
+    const send = vi.fn().mockRejectedValue(new Error('boom'));
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    vi.mocked(api.getBudgets).mockResolvedValueOnce([{ id: 'local-1', cloudFileId: 'sync-1' }] as never);
-    await expect(reloadBudgetAfterDownload({ send } as never, 'sync-1')).resolves.toBeUndefined();
-    expect(send).toHaveBeenCalledWith('reset-budget-cache');
+    await expect(reloadBudgetAfterDownload({ send } as never)).resolves.toBeUndefined();
     spy.mockRestore();
   });
 });
