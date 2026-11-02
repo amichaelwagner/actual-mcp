@@ -204,6 +204,8 @@ export class ActualConnection {
           : undefined
       );
 
+      await rebuildBudgetCache(this.actualLib);
+
       // Reason: seed lastSyncAt so the first call after init does not immediately sync.
       this.lastSyncAt = Date.now();
     } catch (err) {
@@ -222,6 +224,26 @@ export class ActualConnection {
       throw err;
     }
     console.error('Actual Budget API initialized successfully');
+  }
+}
+
+/**
+ * Recompute every budget month from the raw budget rows after a download.
+ *
+ * Reason: a fresh download can ship a stale computed-spreadsheet cache
+ * (cache.sqlite). Months whose budget rows arrived after that cache was built
+ * then read as $0 budgeted, which skews To Budget for every later month. This is
+ * the same "Reset budget cache" action the Actual app offers. Failure is logged,
+ * not thrown, so a cache problem never blocks the connection.
+ *
+ * @param lib - The library handle returned by `api.init()`
+ */
+export async function rebuildBudgetCache(lib: Pick<ActualApi, 'send'> | null): Promise<void> {
+  if (!lib || typeof lib.send !== 'function') return;
+  try {
+    await lib.send('reset-budget-cache');
+  } catch (err) {
+    console.error('Failed to rebuild budget cache, continuing with downloaded cache:', err);
   }
 }
 

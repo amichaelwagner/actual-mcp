@@ -9,7 +9,12 @@ vi.mock('@actual-app/api', () => ({
 }));
 
 import * as api from '@actual-app/api';
-import { buildInitConfig, getActualConnection, resetActualConnectionForTests } from './connection.js';
+import {
+  buildInitConfig,
+  getActualConnection,
+  rebuildBudgetCache,
+  resetActualConnectionForTests,
+} from './connection.js';
 
 /** A promise whose resolve/reject are exposed, for deterministic ordering control. */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
@@ -384,5 +389,36 @@ describe('ActualConnection auth failures', () => {
     vi.mocked(api.init).mockRejectedValueOnce(new Error('Authentication failed: invalid or expired session token'));
     await expect(getActualConnection().ensureReady()).rejects.toThrow('expired session token');
     expect(api.init).toHaveBeenCalledWith(expect.objectContaining({ sessionToken: 'expired-token' }));
+  });
+});
+
+describe('rebuildBudgetCache', () => {
+  it('sends reset-budget-cache to the library', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    await rebuildBudgetCache({ send } as never);
+    expect(send).toHaveBeenCalledWith('reset-budget-cache');
+  });
+
+  it('does nothing when the library handle is missing', async () => {
+    await expect(rebuildBudgetCache(null)).resolves.toBeUndefined();
+  });
+
+  it('logs and continues when the rebuild fails', async () => {
+    const send = vi.fn().mockRejectedValue(new Error('boom'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(rebuildBudgetCache({ send } as never)).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('runs after the budget download during init', async () => {
+    resetActualConnectionForTests();
+    const send = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(api.init).mockResolvedValueOnce({ send } as never);
+    vi.mocked(api.getBudgets).mockResolvedValueOnce([{ id: 'b', cloudFileId: 'c' }] as never);
+    vi.mocked(api.downloadBudget).mockResolvedValueOnce(undefined as never);
+    await getActualConnection().ensureReady();
+    expect(send).toHaveBeenCalledWith('reset-budget-cache');
+    resetActualConnectionForTests();
   });
 });
