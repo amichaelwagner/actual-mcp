@@ -134,7 +134,7 @@ export class ActualConnection {
     if (Date.now() - this.lastSyncAt < ttl) return Promise.resolve();
     if (this.inflightSync) return this.inflightSync;
 
-    this.inflightSync = this.enqueue(() => api.sync())
+    this.inflightSync = this.enqueue(() => this.syncOrRedownload())
       .then(() => {
         this.lastSyncAt = Date.now();
       })
@@ -145,6 +145,31 @@ export class ActualConnection {
         this.inflightSync = null;
       });
     return this.inflightSync;
+  }
+
+  /**
+   * Sync with the server. If the server reports the budget file was reset
+   * (the user ran "Reset sync" in Actual), the local copy can never sync again,
+   * so close it and download the budget fresh within the same queue slot.
+   *
+   * Reason: running the re-download inline (not as a new queued init) avoids a
+   * deadlock with operations already queued behind this sync.
+   */
+  private async syncOrRedownload(): Promise<void> {
+    try {
+      await api.sync();
+    } catch (error: unknown) {
+      if (!isFileResetError(error)) throw error;
+      console.error('Budget file was reset on the server; downloading a fresh copy.');
+      try {
+        await api.shutdown();
+      } catch (shutdownErr) {
+        console.error('Error closing reset budget before re-download:', shutdownErr);
+      }
+      this.apiOpened = false;
+      this.actualLib = null;
+      await this.doInit();
+    }
   }
 
   /**
@@ -280,6 +305,19 @@ export async function rebuildBudgetCache(lib: Pick<ActualApi, 'send'> | null): P
   } catch (err) {
     console.error('Failed to rebuild budget cache, continuing with downloaded cache:', err);
   }
+}
+
+/**
+ * True when a sync error means the server-side budget file was reset.
+ *
+ * @param error - The error thrown by `api.sync()`
+ * @returns Whether the local copy must be re-downloaded
+ */
+export function isFileResetError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: unknown; reason?: unknown; message?: unknown };
+  if (e.code === 'file-has-reset' || e.reason === 'file-has-reset') return true;
+  return typeof e.message === 'string' && e.message.includes('file-has-reset');
 }
 
 let instance: ActualConnection | null = null;

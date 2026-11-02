@@ -12,6 +12,7 @@ import * as api from '@actual-app/api';
 import {
   buildInitConfig,
   getActualConnection,
+  isFileResetError,
   rebuildBudgetCache,
   reloadBudgetAfterDownload,
   resetActualConnectionForTests,
@@ -441,5 +442,43 @@ describe('reloadBudgetAfterDownload', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(reloadBudgetAfterDownload({ send } as never)).resolves.toBeUndefined();
     spy.mockRestore();
+  });
+});
+
+describe('isFileResetError', () => {
+  it('detects the file-has-reset code', () => {
+    expect(isFileResetError({ code: 'file-has-reset' })).toBe(true);
+    expect(isFileResetError({ reason: 'file-has-reset' })).toBe(true);
+  });
+
+  it('ignores unrelated errors', () => {
+    expect(isFileResetError(new Error('network down'))).toBe(false);
+    expect(isFileResetError(null)).toBe(false);
+  });
+});
+
+describe('ActualConnection after a server-side sync reset', () => {
+  afterEach(() => {
+    delete process.env.ACTUAL_SYNC_TTL_MS;
+    resetActualConnectionForTests();
+  });
+
+  it('re-downloads the budget when sync reports file-has-reset', async () => {
+    resetActualConnectionForTests();
+    vi.clearAllMocks();
+    process.env.ACTUAL_SYNC_TTL_MS = '0';
+    const send = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(api.init).mockResolvedValue({ send } as never);
+    vi.mocked(api.getBudgets).mockResolvedValue([{ id: 'b', cloudFileId: 'c' }] as never);
+    vi.mocked(api.downloadBudget).mockResolvedValue(undefined as never);
+    vi.mocked(api.shutdown).mockResolvedValue(undefined as never);
+    const conn = getActualConnection();
+    await conn.ensureReady();
+    vi.mocked(api.sync).mockRejectedValueOnce(Object.assign(new Error('reset'), { code: 'file-has-reset' }));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await conn.run(async () => 'ok');
+    spy.mockRestore();
+    expect(api.shutdown).toHaveBeenCalled();
+    expect(api.downloadBudget).toHaveBeenCalledTimes(2);
   });
 });
