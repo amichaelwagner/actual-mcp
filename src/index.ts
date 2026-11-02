@@ -19,6 +19,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { isValidBearerToken } from './utils/bearer-auth.js';
+import { routeSessionRequest } from './utils/session-routing.js';
 import { initActualApi, shutdownActualApi } from './actual-api.js';
 import { fetchAllAccounts } from './core/data/fetch-accounts.js';
 import { getActualConnection } from './integrations/actual/connection.js';
@@ -283,9 +284,32 @@ async function main(): Promise<void> {
       const requestLabel = `${req.method} ${req.path}`;
       try {
         let session = sessionHeader ? streamableSessions.get(sessionHeader) : undefined;
+        const route = routeSessionRequest(req.method, sessionHeader, !!session, isInitializeRequest(req.body));
+
+        if (route === 'stateless') {
+          // One-shot server + transport with no session tracking; see session-routing.ts for why.
+          const oneShotServer = createServer({ enableWrite: !!enableWrite });
+          const oneShotTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          res.on('close', () => {
+            void oneShotTransport.close();
+            void oneShotServer.close();
+          });
+          await oneShotServer.connect(oneShotTransport);
+          await oneShotTransport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        if (route === 'not-found') {
+          res.status(404).json({
+            jsonrpc: '2.0',
+            error: { code: -32001, message: 'Session not found' },
+            id: null,
+          });
+          return;
+        }
 
         if (!session) {
-          if (req.method === 'POST' && isInitializeRequest(req.body)) {
+          if (route === 'initialize') {
             const remoteAddress = req.ip ?? req.socket.remoteAddress ?? 'unknown';
             const sessionServer = createServer({ enableWrite: !!enableWrite });
             const streamableTransport = new StreamableHTTPServerTransport({
